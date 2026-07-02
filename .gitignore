@@ -1,0 +1,31 @@
+# R session and history files
+.Rhistory
+.Rapp.history
+.RData
+.Ruserdata
+
+# RStudio project files
+.Rproj.user/
+
+# R package/build artifacts
+*.Rcheck/
+*.tar.gz
+
+# Temporary files
+*.tmp
+*.temp
+*.bak
+*.swp
+*~
+
+# OS metadata
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Logs
+*.log
+
+# Environment files
+.Renviron
+.Rprofile
