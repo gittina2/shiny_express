@@ -1,5 +1,4 @@
 library(shiny)
-library(data.table)
 library(expressyouRcell)
 
 data(cell_dt, package = "expressyouRcell")
@@ -19,28 +18,16 @@ pictograph_data <- list(
   fibroblast = fibroblast_dt
 )
 
-demo_timepoints <- function(n = 250) {
-  genes <- unique(gene_loc_table_mm22$gene_symbol)
-  set.seed(42)
-
-  list(
-    baseline = data.table(
-      gene_symbol = sample(genes, n),
-      demo_value = rnorm(n),
-      p_value = runif(n)
-    ),
-    followup = data.table(
-      gene_symbol = sample(genes, n),
-      demo_value = rnorm(n, mean = 0.25),
-      p_value = runif(n)
-    )
-  )
-}
-
 ui <- fluidPage(
   titlePanel("expressyouRcell Demo"),
   sidebarLayout(
     sidebarPanel(
+      selectInput(
+        "demo_dataset",
+        "Demo dataset",
+        choices = c("example_list" = "example_list"),
+        selected = "example_list"
+      ),
       selectInput(
         "cell_type",
         "Dataset",
@@ -53,21 +40,29 @@ ui <- fluidPage(
         choices = c("FDR" = "fdr", "VALUE" = "value"),
         selected = "fdr"
       ),
-      actionButton("run", "Run pipeline"),
-      actionButton("animate", "Create animation"),
+      actionButton("run", "Visualize results"),
+      actionButton("animate", "Create Rtion"),
       tags$hr(),
       verbatimTextOutput("status")
     ),
     mainPanel(
-      plotOutput("cell_plot", height = "650px"),
+      wellPanel(
+        textOutput("timepoint_label"),
+        plotOutput("cell_plot", height = "650px"),
+        uiOutput("timepoint_controls")
+      ),
       uiOutput("animation_preview")
     )
   )
 )
 
 server <- function(input, output, session) {
+  current_timepoint <- reactiveVal(1)
+
   pipeline_result <- eventReactive(input$run, {
-    timepoints <- demo_timepoints()
+    req(input$demo_dataset)
+
+    selected_data <- expressyouRcell::example_list
     coloring_mode <- if (identical(input$coloring_method, "fdr")) {
       "enrichment"
     } else {
@@ -75,7 +70,7 @@ server <- function(input, output, session) {
     }
 
     cell_output <- color_cell(
-      timepoint_list = timepoints,
+      timepoint_list = selected_data,
       pictograph = input$cell_type,
       gene_loc_table = gene_loc_table_mm22,
       coloring_mode = coloring_mode,
@@ -87,20 +82,87 @@ server <- function(input, output, session) {
 
     list(
       cell = cell_output,
-      timepoints = names(timepoints),
+      demo_dataset = input$demo_dataset,
+      timepoints = names(selected_data),
       method = input$coloring_method
     )
-  }, ignoreInit = FALSE)
+  })
+
+  observeEvent(input$run, {
+    current_timepoint(1)
+  })
+
+  timepoint_plots <- reactive({
+    result <- pipeline_result()
+    plots <- if (!is.null(result$cell$plot)) {
+      result$cell$plot
+    } else {
+      result$cell
+    }
+
+    req(length(plots) > 0)
+    plots
+  })
+
+  observeEvent(input$previous_timepoint, {
+    current_timepoint(max(1, current_timepoint() - 1))
+  })
+
+  observeEvent(input$next_timepoint, {
+    plots <- timepoint_plots()
+    current_timepoint(min(length(plots), current_timepoint() + 1))
+  })
+
+  output$timepoint_label <- renderText({
+    result <- pipeline_result()
+    plots <- timepoint_plots()
+    index <- min(current_timepoint(), length(plots))
+    plot_names <- names(plots)
+    has_plot_name <- !is.null(plot_names) &&
+      length(plot_names) >= index &&
+      nzchar(plot_names[[index]])
+    if (!has_plot_name) {
+      plot_names <- result$timepoints
+    }
+
+    if (!is.null(plot_names) &&
+        length(plot_names) >= index &&
+        nzchar(plot_names[[index]])) {
+      sprintf("%s (%d/%d)", plot_names[[index]], index, length(plots))
+    } else {
+      sprintf("Timepoint %d of %d", index, length(plots))
+    }
+  })
 
   output$cell_plot <- renderPlot({
-    result <- pipeline_result()
-    result$cell$plot[[1]]
+    plots <- timepoint_plots()
+    index <- min(current_timepoint(), length(plots))
+    plots[[index]]
+  })
+
+  output$timepoint_controls <- renderUI({
+    plots <- timepoint_plots()
+    index <- min(current_timepoint(), length(plots))
+
+    tagList(
+      actionButton(
+        "previous_timepoint",
+        "Previous",
+        disabled = if (index <= 1) "disabled" else NULL
+      ),
+      actionButton(
+        "next_timepoint",
+        "Next",
+        disabled = if (index >= length(plots)) "disabled" else NULL
+      )
+    )
   })
 
   output$status <- renderText({
     result <- pipeline_result()
     paste(
       "Backend package: expressyouRcell",
+      paste("Demo dataset:", result$demo_dataset),
       paste("Cell dataset:", input$cell_type),
       paste("Coloring method:", toupper(result$method)),
       paste("Timepoints:", paste(result$timepoints, collapse = ", ")),
