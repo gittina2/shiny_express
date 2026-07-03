@@ -1,4 +1,5 @@
 library(shiny)
+library(bslib)
 library(expressyouRcell)
 
 data(cell_dt, package = "expressyouRcell")
@@ -37,11 +38,18 @@ ui <- fluidPage(
       radioButtons(
         "coloring_method",
         "Coloring method",
-        choices = c("FDR" = "fdr", "VALUE" = "value"),
-        selected = "fdr"
+        choices = c(
+          "Enrichment (FDR-based)" = "enrichment",
+          "Mean of selected column" = "mean"
+        ),
+        selected = "enrichment"
+      ),
+      conditionalPanel(
+        condition = "input.coloring_method == 'mean'",
+        uiOutput("value_column_ui")
       ),
       actionButton("run", "Visualize results"),
-      actionButton("animate", "Create Rtion"),
+      downloadButton("download_results", "Export results"),
       tags$hr(),
       verbatimTextOutput("status")
     ),
@@ -50,41 +58,93 @@ ui <- fluidPage(
         textOutput("timepoint_label"),
         plotOutput("cell_plot", height = "650px"),
         uiOutput("timepoint_controls")
-      ),
-      uiOutput("animation_preview")
+      )
     )
+  ),
+  theme = bs_theme(
+    version = 5,
+    bootswatch = "cosmo",
+    primary = "#2C3E50",
+    secondary = "#18BC9C"
   )
 )
 
 server <- function(input, output, session) {
   current_timepoint <- reactiveVal(1)
 
+  demo_column_choices <- reactive({
+    selected_data <- expressyouRcell::example_list
+    common_columns <- Reduce(intersect, lapply(selected_data, names))
+    numeric_columns <- common_columns[
+      vapply(
+        common_columns,
+        function(column) {
+          all(vapply(selected_data, function(timepoint) {
+            is.numeric(timepoint[[column]])
+          }, logical(1)))
+        },
+        logical(1)
+      )
+    ]
+
+    if (length(numeric_columns) > 0) {
+      numeric_columns
+    } else {
+      common_columns
+    }
+  })
+
+  output$value_column_ui <- renderUI({
+    choices <- demo_column_choices()
+    req(length(choices) > 0)
+
+    selected_column <- if ("demo_value" %in% choices) {
+      "demo_value"
+    } else if ("logFC" %in% choices) {
+      "logFC"
+    } else {
+      choices[[1]]
+    }
+
+    selectInput(
+      "value_column",
+      "Column for mean coloring",
+      choices = choices,
+      selected = selected_column
+    )
+  })
+
   pipeline_result <- eventReactive(input$run, {
     req(input$demo_dataset)
 
     selected_data <- expressyouRcell::example_list
-    coloring_mode <- if (identical(input$coloring_method, "fdr")) {
-      "enrichment"
-    } else {
-      "mean"
-    }
+    coloring_mode <- input$coloring_method
+    req(coloring_mode %in% c("enrichment", "mean"))
 
-    cell_output <- color_cell(
+    color_cell_args <- list(
       timepoint_list = selected_data,
       pictograph = input$cell_type,
       gene_loc_table = gene_loc_table_mm22,
       coloring_mode = coloring_mode,
       data_type = "diffanalysis",
-      col_name = "demo_value",
       pval_col = "p_value",
       legend = TRUE
     )
 
+    if (identical(coloring_mode, "mean")) {
+      req(input$value_column)
+      color_cell_args$col_name <- input$value_column
+    }
+
+    cell_output <- do.call(color_cell, color_cell_args)
+
     list(
       cell = cell_output,
+      cell_type = input$cell_type,
       demo_dataset = input$demo_dataset,
       timepoints = names(selected_data),
-      method = input$coloring_method
+      coloring_mode = coloring_mode,
+      value_column = if (identical(coloring_mode, "mean")) input$value_column else NULL
     )
   })
 
@@ -160,49 +220,79 @@ server <- function(input, output, session) {
 
   output$status <- renderText({
     result <- pipeline_result()
-    paste(
+    status_lines <- c(
       "Backend package: expressyouRcell",
       paste("Demo dataset:", result$demo_dataset),
-      paste("Cell dataset:", input$cell_type),
-      paste("Coloring method:", toupper(result$method)),
+      paste("Cell dataset:", result$cell_type),
+      paste("Coloring mode:", result$coloring_mode)
+    )
+
+    if (!is.null(result$value_column)) {
+      status_lines <- c(status_lines, paste("Mean column:", result$value_column))
+    }
+
+    paste(
+      status_lines,
       paste("Timepoints:", paste(result$timepoints, collapse = ", ")),
       paste("color_cell output:", paste(names(result$cell), collapse = ", ")),
       sep = "\n"
     )
   })
 
-  animation_file <- eventReactive(input$animate, {
-    result <- pipeline_result()
+  output$download_results <- downloadHandler(
+    filename = function() {
+      sprintf("expressyouRcell_results_%s.zip", format(Sys.Date(), "%Y%m%d"))
+    },
+    content = function(file) {
+      result <- pipeline_result()
+      plots <- timepoint_plots()
 
-    if (!input$cell_type %in% c("cell", "neuron", "fibroblast", "microglia")) {
-      showNotification(
-        "animate() in the installed backend supports cell, neuron, fibroblast, and microglia in this build.",
-        type = "warning"
+      if (!result$cell_type %in% c("cell", "neuron", "fibroblast", "microglia")) {
+        stop(
+          "animate() in the installed backend supports cell, neuron, fibroblast, and microglia in this build."
+        )
+      }
+
+      export_dir <- file.path(
+        tempdir(),
+        paste0("expressyouRcell_export_", session$token, "_", as.integer(Sys.time()))
       )
-      return(NULL)
-    }
+      results_dir <- file.path(export_dir, "results")
+      dir.create(results_dir, recursive = TRUE, showWarnings = FALSE)
 
-    output_dir <- file.path(tempdir(), paste0("expressyouRcell_", session$token))
-    animate(
-      data = result$cell,
-      timepoints = result$timepoints,
-      seconds = 1,
-      fps = 4,
-      input_dir = output_dir,
-      names = result$timepoints,
-      filename = "demo_animation",
-      format = "gif"
-    )
+      for (index in seq_along(plots)) {
+        local({
+          png(
+            filename = file.path(results_dir, sprintf("timepoint_%d.png", index)),
+            width = 1600,
+            height = 1200,
+            res = 150
+          )
+          on.exit(dev.off(), add = TRUE)
+          print(plots[[index]])
+        })
+      }
 
-    addResourcePath("expressyouRcell_demo", output_dir)
-    file.path("expressyouRcell_demo", "demo_animation.gif")
-  })
+      animate(
+        data = result$cell,
+        timepoints = result$timepoints,
+        seconds = 1,
+        fps = 4,
+        input_dir = results_dir,
+        names = result$timepoints,
+        filename = "animation",
+        format = "gif"
+      )
 
-  output$animation_preview <- renderUI({
-    src <- animation_file()
-    req(src)
-    tags$img(src = src, style = "max-width: 100%; height: auto;")
-  })
+      zip::zip(
+        zipfile = file,
+        files = "results",
+        root = export_dir,
+        mode = "mirror"
+      )
+    },
+    contentType = "application/zip"
+  )
 }
 
 shinyApp(ui, server)
