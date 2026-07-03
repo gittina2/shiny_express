@@ -48,17 +48,19 @@ ui <- fluidPage(
         condition = "input.coloring_method == 'mean'",
         uiOutput("value_column_ui")
       ),
+      checkboxInput("show_legend", "Show legend", value = TRUE),
       actionButton("run", "Visualize results"),
       downloadButton("download_results", "Export results"),
       tags$hr(),
-      verbatimTextOutput("status")
+      verbatimTextOutput("status"),
+      width=3
     ),
     mainPanel(
       wellPanel(
         textOutput("timepoint_label"),
-        plotOutput("cell_plot", height = "650px"),
-        uiOutput("timepoint_controls")
-      )
+        plotOutput("cell_plot", height = "650px", width = "100%"),
+        uiOutput("timepoint_controls")        
+      ), width=9
     )
   ),
   theme = bs_theme(
@@ -128,7 +130,7 @@ server <- function(input, output, session) {
       coloring_mode = coloring_mode,
       data_type = "diffanalysis",
       pval_col = "p_value",
-      legend = TRUE
+      legend = input$show_legend
     )
 
     if (identical(coloring_mode, "mean")) {
