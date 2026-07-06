@@ -197,6 +197,9 @@ expressyouRcell R package (backend engine)
 
 ### Associated publication
 
+https://www.cell.com/iscience/fulltext/S2589-0042(23)00930-6
+
+Cite using: 
 [Paganin M, Tebaldi T, Lauria F, Viero G.]. (2023).  
 *Visualizing gene expression changes in time, space, and single cells with expressyouRcell*.  
 iScience.  
