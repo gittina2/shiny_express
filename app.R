@@ -197,9 +197,24 @@ server <- function(input, output, session) {
   })
 
   output$cell_plot <- renderPlot({
-    plots <- timepoint_plots()
-    index <- min(current_timepoint(), length(plots))
-    plots[[index]]
+
+    withProgress(
+      message = "Generating plot...",
+      detail = "This may take a few seconds.",
+      value = 0,
+      {
+        incProgress(0.5, detail = "Running pipeline...")
+
+        plots <- timepoint_plots()
+        index <- min(current_timepoint(), length(plots))
+        
+        incProgress(1, detail = "Rendering plot")
+
+        plots[[index]]
+      }
+    )
+
+    
   })
 
   output$timepoint_controls <- renderUI({

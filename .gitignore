@@ -29,3 +29,8 @@ desktop.ini
 # Environment files
 .Renviron
 .Rprofile
+
+rsconnect/
+.agents/
+renv/library/
+renv/staging/
