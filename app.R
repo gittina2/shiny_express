@@ -49,7 +49,18 @@ ui <- fluidPage(
         uiOutput("value_column_ui")
       ),
       checkboxInput("show_legend", "Show legend", value = TRUE),
-      actionButton("run", "Visualize results"),
+      
+      tags$div(
+        style = "margin-top: 15px;",
+        
+        actionButton("run", "Visualize results"),
+        tags$div(
+          style = "margin-top: 5px; font-size: 12px; color: #888;",
+          "Note: The visualization may take a few seconds to generate.",
+          textOutput("run_status")
+        )
+      ),      
+      
       downloadButton("download_results", "Export results"),
       tags$hr(),
       verbatimTextOutput("status"),
@@ -73,7 +84,12 @@ ui <- fluidPage(
 
 server <- function(input, output, session) {
   current_timepoint <- reactiveVal(1)
+  run_status <- reactiveVal("")
 
+  output$run_status <- renderText({
+    run_status()
+  })
+  
   demo_column_choices <- reactive({
     selected_data <- expressyouRcell::example_list
     common_columns <- Reduce(intersect, lapply(selected_data, names))
@@ -116,11 +132,17 @@ server <- function(input, output, session) {
     )
   })
 
+  observeEvent(input$run, {    
+    current_timepoint(1)
+    run_status("Running...")
+  })
+
   pipeline_result <- eventReactive(input$run, {
     req(input$demo_dataset)
-
+   
     selected_data <- expressyouRcell::example_list
     coloring_mode <- input$coloring_method
+
     req(coloring_mode %in% c("enrichment", "mean"))
 
     color_cell_args <- list(
@@ -138,7 +160,9 @@ server <- function(input, output, session) {
       color_cell_args$col_name <- input$value_column
     }
 
-    cell_output <- do.call(color_cell, color_cell_args)
+    cell_output <- withProgress(message = "Running...", {
+      do.call(color_cell, color_cell_args)
+    })
 
     list(
       cell = cell_output,
@@ -148,10 +172,6 @@ server <- function(input, output, session) {
       coloring_mode = coloring_mode,
       value_column = if (identical(coloring_mode, "mean")) input$value_column else NULL
     )
-  })
-
-  observeEvent(input$run, {
-    current_timepoint(1)
   })
 
   timepoint_plots <- reactive({
@@ -196,25 +216,9 @@ server <- function(input, output, session) {
     }
   })
 
-  output$cell_plot <- renderPlot({
-
-    withProgress(
-      message = "Generating plot...",
-      detail = "This may take a few seconds.",
-      value = 0,
-      {
-        incProgress(0.5, detail = "Running pipeline...")
-
-        plots <- timepoint_plots()
-        index <- min(current_timepoint(), length(plots))
-        
-        incProgress(1, detail = "Rendering plot")
-
-        plots[[index]]
-      }
-    )
-
-    
+  output$cell_plot <- renderPlot({    plots <- timepoint_plots()
+    index <- min(current_timepoint(), length(plots))
+    plots[[index]]
   })
 
   output$timepoint_controls <- renderUI({
